@@ -1,4 +1,7 @@
 # Halo 2 HD
+
+[![Build](https://github.com/MakeMHz/stellar-halo-2-hd/actions/workflows/build.yml/badge.svg)](https://github.com/MakeMHz/stellar-halo-2-hd/actions/workflows/build.yml)
+
 Halo 2 HD is a mod for the original Xbox version of Halo 2 to add support for HD resolutions as well as some quality of life updates. This mod will let you play the game in 480p (proper), 720p, and 1080i (1080p internally).
 
 ![](/_images/coag_1080p.png)
@@ -36,7 +39,7 @@ highly recommended for 720p mode as it can increase FPS by as much as 10 FPS. Ho
 outlined in the wiki and should be thoroughly read and understood before attempting to enable and configure GPU overclocking.
 
 #### HDD Transfer Speeds
-This patch can increase the speed at which the HDD transfers data to the console which will improve loading times and help reduce pop-in. This value is customizable via the config file and is explained in detail [here](https://github.com/grimdoomer/Halo-2-HD/wiki/Configuration-File#hddspeed). In order to 
+This patch can increase the speed at which the HDD transfers data to the console which will improve loading times and help reduce pop-in. This value is customizable via the config file and is explained in detail [here](https://github.com/grimdoomer/Halo-2-HD/wiki/Configuration-File#hddspeed). In order to
 use transfer speeds faster than UDMA 3 you will need an 80-pin IDE cable. Trying to use UDAM 4 or 5 with the stock 40-pin cable will result in read errors and the game crashing on startup.
 
 #### Quality of Life Improvements
@@ -60,7 +63,7 @@ This patch currently only works with the base version of the game (1.0) and does
 - Campaign loading screen, player sign-in screen, and pre-game lobbies still render in 640x480, adjusting this is non-trivial and most likely won't be fixed.
 
 ## Installation & Compiling
-You can find a precompiled version of the patch in the Releases section, you'll need [XDelta](https://www.romhacking.net/utilities/598/) to apply the patch to the clean v1.0 xbe file (SHA1: 78BCC597D9A30AE91DF6FC5EB44FDC62A28EE7F2). 
+You can find a precompiled version of the patch in the Releases section, you'll need [XDelta](https://www.romhacking.net/utilities/598/) to apply the patch to the clean v1.0 xbe file (SHA1: 78BCC597D9A30AE91DF6FC5EB44FDC62A28EE7F2).
 
 Once the patch is applied you will
 need to copy the patched xbe file and the hd_config.ini file into your Halo 2 game folder on your Xbox console. You'll also want to edit the config file and adjust any settings you'd like to change. Additional information for what the settings are and how to change them can
