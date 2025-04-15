@@ -16,8 +16,8 @@ BITS 32
     _%1:
         db %2,0
         align 4, db 0
-    
-    HACK_DATA %1            
+
+    HACK_DATA %1
 %endmacro
 
 %macro PHYS_MEM_REGION 2
@@ -309,7 +309,7 @@ _Hack_InitHacks:
         push    Hack_StartupMessage
         mov     eax, DbgPrint
         call    eax
-        
+
         ;INT3
 
         ; Parse the config file.
@@ -317,88 +317,88 @@ _Hack_InitHacks:
 
         ; Resolve kernel imports.
         call    _Util_ResolveKernelImports
-        
+
         ; Check if we should overclock the GPU.
         cmp     byte [Cfg_OverclockGPU], 1
         jnz     .set_hdd_speed
-        
+
             ; Check that the fan speed override has been set and force it to max speed if not.
             cmp     byte [Cfg_OverrideFanSpeed], 1
             jz      .set_fan_speed
-            
+
                 ; Force fan speed to max because the user is an idiot and didn't read the big fat
                 ; warnings about cooking the GPU on stock fan speeds. If they choose to enabled the
                 ; override and not set the fan speed high enough then RIP to their GPU.
                 mov     dword [Cfg_FanSpeedPercent], 100
-        
+
 .set_fan_speed:
-        
+
             ; Set the fan speed first.
             push    dword [Cfg_FanSpeedPercent]
             call    _Util_SetFanSpeed
-            
+
             ; Update GPU clock configuration.
             push    dword [Cfg_GPUOverclockStep]
             call    _Util_OverclockGPU
-        
+
 .set_hdd_speed:
 
         ; Check if we should set HDD speed.
         cmp     byte [Cfg_SetHddSpeed], 1
         jnz     .check_memory
-        
+
             ; Set HDD UDMA speed.
             push    dword [Cfg_HddSpeed]
             call    _Util_HddSetTransferSpeed
             cmp     eax, 1
             jz      .check_memory
-            
+
                 ; Set HDD speed failed, console could be in unstable state, do a cold reboot.
                 push    3
                 call    dword [HalReturnToFirmware]
                 INT3
-        
+
 .check_memory:
-        
+
         ; Check if the console has 128MB of RAM.
         call    _Util_GetMemoryCapacity
         cmp     eax, 128
         jnz     .low_memory_install_hooks
-        
+
             ; Flag the console has 128MB of RAM.
             mov     byte [Hack_HasRAMUpgrade], 1
-            
+
             ; Force enable triple buffering, no reason not to...
             mov     byte [Hack_TripleBufferingEnabled], 1
-            
+
             ; Adjust the size of the runtime data region since we'll be moving the texture and geometry cache out.
             sub     dword [Hack_RuntimeDataRegionSize], RUNTIME_DATA_REGION_SIZE_ADJUST_128MB
             sub     dword [Hack_RuntimeDataRegionEndAddress], RUNTIME_DATA_REGION_SIZE_ADJUST_128MB
-            
+
             ; Hook physical memory and cache initialization functions.
             HOOK_FUNCTION _rasterizer_alloc_and_create_render_target, Hook__rasterizer_alloc_and_create_render_target
             HOOK_FUNCTION 0012DA30h, Hook__initialize_geometry_cache
             HOOK_FUNCTION 0012DAD0h, Hook__geometry_cache_globals_cleanup
             HOOK_FUNCTION _initialize_standard_texture_cache, Hook__initialize_standard_texture_cache
             HOOK_FUNCTION 0012C290h, Hook__texture_cache_globals_cleanup
-            
+
             ; Patch the max usable PFN for contiguous allocations.
             call    _Hack_PatchMaxPFN
-            
+
             jmp     .install_hooks
-            
+
 .low_memory_install_hooks:
 
         ; Install hooks specific to consoles with no RAM upgrade.
         HOOK_FUNCTION _rasterizer_create_render_target, Hook__rasterizer_create_render_target
         HOOK_FUNCTION rasterizer_targets_initialize, Hook_rasterizer_targets_initialize
-        
+
         ; Adjust the size of the runtime data region to account for increased front/back buffers.
         sub     dword [Hack_RuntimeDataRegionSize], RUNTIME_DATA_REGION_SIZE_ADJUST_64MB
         sub     dword [Hack_RuntimeDataRegionEndAddress], RUNTIME_DATA_REGION_SIZE_ADJUST_64MB
 
 .install_hooks:
-        
+
         ; Install hooks.
         HOOK_FUNCTION 0012B41Dh, Hook_physical_memory_allocate
         HOOK_FUNCTION IDirect3D8_CreateDevice, Hook_IDirect3D8_CreateDevice
@@ -412,49 +412,49 @@ _Hack_InitHacks:
         HOOK_FUNCTION _draw_split_screen_window_bars, Hook__draw_split_screen_window_bars
         HOOK_FUNCTION 00223564h, Hook__renderer_setup_player_windows
         HOOK_FUNCTION IDirect3DDevice8_Swap, Hook_IDirect3DDevice8_Swap
-        
+
         ; Hook HalReturnToFirmware so that any attempt to quit the game results in a cold reboot of the console.
         ; Due to how we hot patch the kernel (in 128MB mode) the console is basically "hosed" after running the game. Any attempt
         ; to run another executable, return to dash, IRG, etc, will result in graphical artifacting and the console freezing.
         ; If the console doesn't have extra RAM but the user overclocks the GPU we want to reset that as well.
         HOOK_FUNCTION dword [HalReturnToFirmware], Hack_ColdRebootConsole
-        
+
         ; Calculate fov scale.
         movss   xmm0, dword [Cfg_FieldOfView]
         mov     eax, 70
         cvtsi2ss    xmm1, eax
         divss   xmm0, xmm1
         movss   dword [g_camera_fov_scale], xmm0
-        
+
         ; Check if we should disable the HUD.
         cmp     dword [Cfg_DisableHud], 1
         jnz     .disable_fog
-        
+
             ; Hook the should draw hud function and always disable it.
             HOOK_FUNCTION _should_draw_player_hud, Hook__should_draw_player_hud
-            
+
 .disable_fog:
 
         ; Check if we should disable atmospheric fog for more perf.
         cmp     dword [Cfg_DisableAtmosphericFog], 0
         jz      .disable_anamorphic_scaling
-        
+
             ; Hook the rendering function for atmospheric fog to a stub that just returns.
             HOOK_FUNCTION 00025D50h, 003796F0h
-            
+
 .disable_anamorphic_scaling:
 
         ; Check if we should disable anamorphic scaling.
         cmp     dword [Cfg_DisableAnamorphicScaling], 0
         jz      .run_main
-        
+
             ; Change the anamorphic scaling factor to 1.0
             push    __?float32?__(1.0)
             push    0045DFDCh
             call    _Util_WriteDword
 
 .run_main:
-        
+
         ; Jump to game entry point.
         push    0
         push    0
@@ -462,7 +462,7 @@ _Hack_InitHacks:
         mov     eax, game_main
         call    eax
         add     esp, 0Ch
-        
+
         ; Boot to dashboard.
         push    0
         push    1
@@ -471,9 +471,9 @@ _Hack_InitHacks:
         call    eax
         xor     eax, eax
         retn 4
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_IDirect3D8_CreateDevice -> Print present parameters
     ;---------------------------------------------------------
@@ -482,12 +482,12 @@ _Hook_IDirect3D8_CreateDevice:
         %define StackSize           8h
         %define StackStart          0h
         %define pPresentParams      4h
-        
+
         ; Setup the stack frame.
         sub     esp, StackStart
         push    ecx                 ; ppReturnedDevicePtr
         push    eax                 ; BehaviorFlags
-        
+
         ; Print the back buffer information.
         mov     ecx, dword [esp+StackSize+pPresentParams]
         mov     eax, dword [ecx+0x28]       ; pPresentParams->Flags
@@ -500,27 +500,27 @@ _Hook_IDirect3D8_CreateDevice:
         mov     eax, DbgPrint
         call    eax
         add     esp, 4*4
-        
+
         ; Cleanup the stack frame.
         pop     eax
         pop     ecx
         add     esp, StackStart
-        
+
         ; Replace the instructions we overwrote.
         push    esi
         push    edi
         mov     edi, ecx
         mov     ecx, dword [0040864Ch]
-        
+
         push    003F524Ah
         ret
-        
+
         %undef pPresentParams
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_IDirect3DDevice8_Swap -> Prevent using the front buffer for rendering
     ;---------------------------------------------------------
@@ -534,7 +534,7 @@ _Hook_IDirect3DDevice8_Swap:
             ; Check if debug mode is enabled and draw perf counters if so.
             cmp     dword [Cfg_DebugMode], 0
             jz      .trampoline
-            
+
                 ; Draw FPS counter.
                 call    _Dbg_DrawPerfCounters
 
@@ -547,34 +547,34 @@ _Hook_IDirect3DDevice8_Swap:
         mov     esi, dword [D3D_g_pDevice]
         push    IDirect3DDevice8_Swap+8
         ret
-        
+
 _Hook_IDirect3DDevice8_Swap_reentry:
 
         ; Check if the rasterizer globals have been initialized. Swap will be called once during startup
         ; to clear any persistent data in the back buffer memory region and we ignore this first call.
         cmp     dword [Hack_RasterizerTargetsInitialized], 0
         jz      _Hook_IDirect3DDevice8_Swap_exit
-        
+
             ; Check if triple buffering is enabled and if so handle triple buffering specific state.
             cmp     byte [Hack_TripleBufferingEnabled], 1
             jnz     _Hook_IDirect3DDevice8_Swap_exit
-        
+
                 ; Release references to the back buffer from the previous frame.
                 push    esi
                 push    dword [global_d3d_surface_render_primary_0]
                 mov     esi, D3DResource_Release
                 call    esi
-                
+
                 push    dword [global_d3d_surface_render_primary_1]
                 call    esi
-                
+
                 ; The game stores pointers to the back and front buffer in global_d3d_surface_render_primary[0]/[1] respectively,
-                ; and will swap them each frame. When triple buffering is enabled this will produce a flickering effect for 
+                ; and will swap them each frame. When triple buffering is enabled this will produce a flickering effect for
                 ; anything that uses depth of field effects due to using the incorrect back buffer as an input texture. To work around
                 ; this we update global_d3d_surface_render_primary[0]/[1] to both point to the current back buffer after Swap completes.
                 ; The game will still try and swap these pointers later but it doesn't matter since they point to the same underlying
                 ; memory. This ensures the correct back buffer is always used for depth of field effects.
-                
+
                 ; Update addresses for back and front buffer globals. Note that IDirect3DDevice8_GetBackBuffer will increment
                 ; the ref count on the back buffer surfaces we retrieve which is why we release the reference to the previously
                 ; acquired back buffer surfaces above.
@@ -582,28 +582,28 @@ _Hook_IDirect3DDevice8_Swap_reentry:
                 mov     esi, IDirect3DDevice8_GetBackBuffer
                 call    esi
                 mov     dword [global_d3d_surface_render_primary_0], eax
-                
+
                 push    0
                 call    esi
                 mov     dword [global_d3d_surface_render_primary_1], eax
-                
+
                 ; Update the buffer addresses for all render targets based on the front and back buffer.
                 mov     esi, dword [global_d3d_surface_render_primary_0]
                 mov     esi, dword [esi+4]                      ; pBackBufferSurface->Data
-                
+
                 mov     eax, dword [global_d3d_texture_render_primary_0]
                 mov     dword [eax+4], esi                      ; global_d3d_texture_render_primary_0->Data = pBackBufferSurface->Data
-                
+
                 mov     eax, dword [global_d3d_texture_render_primary_1]
                 mov     dword [eax+4], esi                      ; global_d3d_texture_render_primary_1->Data = global_d3d_surface_render_primary_1->Data
                 pop     esi
-        
+
 _Hook_IDirect3DDevice8_Swap_exit:
 
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_physical_memory_allocate -> Adjust game data allocation size
     ;---------------------------------------------------------
@@ -613,11 +613,11 @@ _Hook_physical_memory_allocate:
         mov     eax, dword [Hack_RuntimeDataRegionSize]     ; 3145000h - 1900000h       ; 2000000h
         push    ecx
         push    dword [Hack_RuntimeDataRegionEndAddress]    ; 30E4000h - 1900000h       ; Reduce the runtime data allocation by 25MB
-        
+
         ; Return to original function.
         push    0012B428h
         ret
-        
+
     ;---------------------------------------------------------
     ; Hook__rasterizer_init_screen_bounds -> Set back buffer resolution based on video mode
     ;---------------------------------------------------------
@@ -629,44 +629,44 @@ _Hook__rasterizer_init_screen_bounds:
         %define ScreenHeight    -0Ch
         %define WidthAdjust     -8h
         %define HeightAdjust    -4h
-        
+
         ; Setup stack frame.
         sub     esp, StackStart
         push    ecx
-        
+
         mov     dword [esp+StackSize+WidthAdjust], edx
         mov     dword [esp+StackSize+HeightAdjust], ecx
-        
+
         ; Set the resolution to 640x480 by default.
         mov     dword [esp+StackSize+ScreenWidth], 640
         mov     dword [esp+StackSize+ScreenHeight], 480
-        
+
         ; If widescreen is not enabled on the console force 640x480 or d3d init will fail.
         cmp     byte [_g_widescreen_enabled], 0
         jz      .set_screen_bounds
-        
+
         ; Get the video flags and set the screen size based on video mode.
         mov     eax, XGetVideoFlags
         call    eax
-        
+
         ; Check if 1080i is disabled and mask out the flag value if so.
         cmp     byte [Cfg_Enable1080iSupport], 0
         jnz     .check_720p_disable
-        
+
             ; Mask out 1080i video flag.
             and     eax, ~4             ; flags &= ~XC_VIDEO_FLAGS_HDTV_1080i
-            
+
 .check_720p_disable:
-            
+
         ; Check if 720p is disabled and mask out the flag if so.
         cmp     byte [Cfg_Enable720pSupport], 0
         jnz     .check_video_mode
-        
+
             ; Mask out 720p video flag.
             and     eax, ~2             ; flags &= ~XC_VIDEO_FLAGS_HDTV_720p
-        
+
 .check_video_mode:
-        
+
         ; Check video flags and set the screen size based on video mode
         test    eax, 4                  ; if ((videoFlags & XC_VIDEO_FLAGS_HDTV_1080i) != 0)
         jnz     .video_mode_1080i
@@ -674,18 +674,18 @@ _Hook__rasterizer_init_screen_bounds:
         jnz     .video_mode_720p
         test    eax, 8                  ; if ((videoFlags & XC_VIDEO_FLAGS_HDTV_480p) == 0)
         jz      .video_mode_end
-        
+
             ; Resolution is 480p
             mov     dword [esp+StackSize+ScreenWidth], 720
             jmp     .video_mode_end
-        
+
 .video_mode_1080i:
 
             ; Resolution is 1080i
             mov     dword [esp+StackSize+ScreenWidth], 1920
             mov     dword [esp+StackSize+ScreenHeight], 1080
             jmp     .video_mode_end
-        
+
 .video_mode_720p:
 
             ; Resolution is 720p
@@ -698,11 +698,11 @@ _Hook__rasterizer_init_screen_bounds:
         ; no point in trying to go any higher because it won't work anyway.
         cmp     byte [Hack_HasRAMUpgrade], 0
         jnz     .set_screen_bounds
-        
+
             ; Check if the resolution was set higher than 480p and if so change it.
             cmp     dword [esp+StackSize+ScreenWidth], 720
             jle     .set_screen_bounds
-            
+
                 ; Force a max resolution of 480p.
                 mov     dword [esp+StackSize+ScreenWidth], 720
                 mov     dword [esp+StackSize+ScreenHeight], 480
@@ -713,40 +713,40 @@ _Hook__rasterizer_init_screen_bounds:
         xor     eax, eax
         mov     word [rasterizer_globals_screen_bounds_x0], ax
         mov     word [rasterizer_globals_screen_bounds_y0], ax
-        
+
         ; Set lower right bounds:
         mov     eax, dword [esp+StackSize+ScreenWidth]
         mov     word [rasterizer_globals_screen_bounds_x1], ax
         mov     eax, dword [esp+StackSize+ScreenHeight]
         mov     word [rasterizer_globals_screen_bounds_y1], ax
-        
+
         ; Set frame bounds:
         mov     eax, dword [esp+StackSize+ScreenWidth]
         mov     ecx, dword [esp+StackSize+WidthAdjust]
         sub     eax, ecx
         mov     word [_rasterizer_globals_frame_bounds_x0], cx
         mov     word [_rasterizer_globals_frame_bounds_x1], ax
-        
+
         mov     eax, dword [esp+StackSize+ScreenHeight]
         mov     ecx, dword [esp+StackSize+HeightAdjust]
         sub     eax, ecx
         mov     word [_rasterizer_globals_frame_bounds_y0], cx
         mov     word [_rasterizer_globals_frame_bounds_y1], ax
-        
+
         ; Cleanup stack frame.
         pop     ecx
         add     esp, StackStart
         ret
-        
+
         %undef HeightAdjust
         %undef WidthAdjust
         %undef ScreenHeight
         %undef ScreenWidth
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_rasterizer_preinitialize -> Update present flags based on video mode
     ;---------------------------------------------------------
@@ -761,61 +761,61 @@ _Hook_rasterizer_preinitialize:
             call    eax
             test    eax, 4          ; if ((XGetVideoFlags() & XC_VIDEO_FLAGS_HDTV_1080i) == 0)
             jz      _raster_preinit_exit
-            
+
                 ; Enable interlaced mode.
                 and     dword [esp+34h], ~40h           ; PresentParams.Flags &= ~D3DPRESENTFLAG_PROGRESSIVE
                 or      dword [esp+34h], 20h            ; PresentParams.Flags |= D3DPRESENTFLAG_INTERLACED
-        
+
 _raster_preinit_exit:
 
         ; Replace the instructions we overwrote.
         lea     ecx, [esp+0Ch]
         push    ecx
         mov     ecx, global_d3d_device
-        
+
         push    00012521h
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_rasterizer_device_initialize -> Update present flags based on video mode
     ;---------------------------------------------------------
-_Hook_rasterizer_device_initialize: 
+_Hook_rasterizer_device_initialize:
 
         ; Set the refresh rate.
         movsx   edx, word [_g_refresh_rate_hz]
         mov     dword [esp+38h], edx                ; PresentParams.FullScreen_RefreshRateInHz = _g_refresh_rate_hz
-        
+
         ; Check if widescreen mode is enabled.
         mov     al, byte [_g_widescreen_enabled]
         cmp     al, 0
         jz      _check_progressive_scan
-        
+
             ; Enable widescreen mode.
             or      dword [esp+34h], 10h            ; PresentParams.Flags |= D3DPRESENTFLAG_WIDESCREEN
-        
+
 _check_progressive_scan:
 
         ; Check if progressive scan is enabled (480p/720p resolutions).
         mov     al, byte [_g_progressive_scan_enabled]
         cmp     al, 0
         jz      _check_interlaced
-        
+
             ; Enable progressive scan mode.
             or      dword [esp+34h], 40h            ; PresentParams.Flags |= D3DPRESENTFLAG_PROGRESSIVE
-            
+
 _check_interlaced:
 
         ; Check the resolution width to see if 1080i is enabled.
         movsx   eax, word [rasterizer_globals_screen_bounds_x1]
         cmp     eax, 1920
         jnz     _device_init_exit
-        
+
             ; Enable interlaced mode.
             and     dword [esp+34h], ~40h           ; PresentParams.Flags &= ~D3DPRESENTFLAG_PROGRESSIVE
             or      dword [esp+34h], 20h            ; PresentParams.Flags |= D3DPRESENTFLAG_INTERLACED
-            
+
 _device_init_exit:
 
         ; If triple buffering is enabled change the present interval and buffer count.
@@ -826,24 +826,24 @@ _device_init_exit:
             mov     dword [esp+18h], 2                  ; BackBufferCount = 2
             mov     dword [esp+20h], 1                  ; SwapEffect = D3DSWAPEFFECT_DISCARD
             mov     dword [esp+3Ch], 1                  ; PresentationInterval = D3DPRESENT_INTERVAL_ONE
-        
+
 .exit:
 
         ; Replace instructions we overwrote.
         mov     eax, dword [global_d3d_device]
         test    eax, eax
         jnz     _device_init_reset
-        
+
         push    000129BEh
         ret
-        
+
 _device_init_reset:
 
         push    000129D4h
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_rasterizer_primary_targets_initialize -> Use screen resolution for texture sizes
     ;---------------------------------------------------------
@@ -858,7 +858,7 @@ _Hook_rasterizer_primary_targets_initialize:
         sub     esp, StackStart
         push    ecx
         push    esi
-        
+
         ; Trampoline to the real function and create the render textures.
         push    Hook_rasterizer_primary_targets_initialize_reentry      ; Fake return address the real function will return to
         push    ecx
@@ -866,7 +866,7 @@ _Hook_rasterizer_primary_targets_initialize:
         push    ebp
         push    esi
         mov     esi, dword [D3D_g_pDevice]      ; g_pDevice
-        
+
         ; Check if triple buffering is enabled and apply fixes if needed.
         cmp     byte [Hack_TripleBufferingEnabled], 1
         jnz     .triple_buffering_disabled
@@ -875,17 +875,17 @@ _Hook_rasterizer_primary_targets_initialize:
             ; to point to the active back buffer. When D3DDevice_Swap is called Hook_IDirect3DDevice8_Swap will handle swapping
             ; all surface/texture buffer addresses to point to the active buffer. Internally the game will still flip its accesses
             ; to global_d3d_surface_render_primary_0/1 every frame, but they point to the same underlying buffer so it doesn't matter.
-            
+
             push    0
             mov     eax, IDirect3DDevice8_GetBackBuffer
             call    eax
             mov     dword [global_d3d_surface_render_primary_0], eax
-            
+
             push    0
             mov     eax, IDirect3DDevice8_GetBackBuffer
             call    eax
             mov     dword [global_d3d_surface_render_primary_1], eax
-            
+
             ; Skip over part of the original function now that we already setup global_d3d_surface_render_primary_0/1.
             xor     ebx, ebx
             mov     byte [esp+0Fh], 1
@@ -897,55 +897,55 @@ _Hook_rasterizer_primary_targets_initialize:
         ; Let the original function reference the back and front buffers.
         push    0001460Ah
         ret
-        
+
 _Hook_rasterizer_primary_targets_initialize_reentry:
 
         ; Save the return value.
         mov     dword [esp+StackSize+ReturnValue], eax
-        
+
         ; Update global_d3d_texture_render_primary:
         push    dword [global_d3d_texture_render_primary_0]
         call    _Hack_UpdateD3dPixelContainerForScreenResolution
-        
+
         push    dword [global_d3d_texture_render_primary_1]
         call    _Hack_UpdateD3dPixelContainerForScreenResolution
-        
+
         ; Update global texaccum:
         push    dword [global_d3d_texture_z_as_target_0]
         call    _Hack_UpdateD3dPixelContainerForScreenResolution
-        
+
         ; Update unknown texture:
         push    dword [global_d3d_texture_z_as_target_1]
         call    _Hack_UpdateD3dPixelContainerForScreenResolution
-        
+
         ; Check if we should disable depth buffer compression.
         cmp     byte [Hack_DisableZCompress], 0
         jz      _Hook_rasterizer_primary_targets_initialize_exit
-        
+
             ; Get the tile info for the depth buffer.
             lea     eax, [esp+StackSize+TileInfo]
             push    eax
             push    1
             mov     eax, IDirect3DDevice8_GetTile
             call    eax
-            
+
             ; Turn off compression for the depth buffer.
             mov     eax, dword [esp+StackSize+TileInfo+D3DTILE.Flags]
             and     eax, ~80000000h                                     ; TileInfo.Flags &= ~D3DTILE_FLAGS_ZCOMPRESS
             mov     dword [esp+StackSize+TileInfo+D3DTILE.Flags], eax
-            
+
             ; Clear the old depth buffer tile (required in order for new tile info to take effect).
             xor     ecx, ecx                            ; pTile = NULL
             mov     eax, 1                              ; Index = 1
             mov     esi, IDirect3DDevice8_SetTile
             call    esi
-            
+
             ; Save the new tile info.
             lea     ecx, [esp+StackSize+TileInfo]       ; pTile = &TileInfo
             mov     eax, 1                              ; Index = 1
             mov     esi, IDirect3DDevice8_SetTile
             call    esi
-        
+
 _Hook_rasterizer_primary_targets_initialize_exit:
 
         ; Set the flag for render target flipping.
@@ -957,14 +957,14 @@ _Hook_rasterizer_primary_targets_initialize_exit:
         pop     ecx
         add     esp, StackStart
         ret
-        
+
         %undef ReturnValue
         %undef TileInfo
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hack_UpdateD3dPixelContainerForScreenResolution -> Update a D3DPIXELCONTAINER structure to match the screen resolution
     ;---------------------------------------------------------
@@ -973,12 +973,12 @@ _Hack_UpdateD3dPixelContainerForScreenResolution:
         %define StackSize       8h
         %define StackStart      0h
         %define pTexture        4h
-        
+
         ; Setup the stack frame.
         sub     esp, StackStart
         push    ecx
         push    edx
-        
+
         ; Calculate the pitch for the texture based on format and screen width.
         mov     eax, dword [esp+StackSize+pTexture]
         mov     eax, dword [eax+0Ch]
@@ -989,7 +989,7 @@ _Hack_UpdateD3dPixelContainerForScreenResolution:
         mov     edx, D3D_CalcTilePitch
         call    edx
         mov     edx, eax
-        
+
         ; Setup the new texture resolution bits.
         movsx   ecx, word [rasterizer_globals_screen_bounds_x1]
         sub     ecx, 1
@@ -999,30 +999,30 @@ _Hack_UpdateD3dPixelContainerForScreenResolution:
         and     eax, 0FFFh
         shl     eax, 12
         or      ecx, eax
-        
+
         ; Setup the new texture pitch bits.
         shr     edx, 6
         sub     edx, 1              ; (pitch / 64) - 1
         shl     edx, 24
         and     edx, 0FF000000h
         or      ecx, edx
-        
+
         ; Update the texture.
         mov     edx, dword [esp+StackSize+pTexture]
         mov     dword [edx+10h], ecx                        ; pTexture->size = ...
-        
+
         ; Cleanup stack frame.
         pop     edx
         pop     ecx
         add     esp, StackStart
         ret 4
-        
+
         %undef pTexture
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__rasterizer_create_render_target -> Change render target texture size based on screen resolution
     ;---------------------------------------------------------
@@ -1032,21 +1032,21 @@ _Hook__rasterizer_create_render_target:
         %define StackStart      0h
         %define TextureWidth    8h
         %define TextureHeight   0Ch
-        
+
         ; TODO: Change this to hook rasterizer_targets_initialize instead and combine with the
         ;   allocation size change patch as well...
-        
+
         ; Setup the stack frame.
         sub     esp, StackStart
         push    eax                 ; rasterizer_target
-        
+
         ; Check the render target texture id.
         cmp     eax, 1
         jz      _fix_render_target_1
-        
+
         ; Don't make any updates
         jmp     _create_render_target_exit
-        
+
 _fix_render_target_1:
 
         ;INT3
@@ -1057,27 +1057,27 @@ _fix_render_target_1:
         movsx   eax, word [rasterizer_globals_screen_bounds_y1]
         mov     dword [esp+StackSize+TextureHeight], eax
         jmp     _create_render_target_exit
-        
+
 _create_render_target_exit:
 
         ; Cleanup the stack frame.
         pop     eax
         add     esp, StackStart
-        
+
         ; Replace the instructions we overwrote.
         push    ecx
         push    ebp
         mov     ebp, [esp+24h]
         push    _rasterizer_create_render_target+6
         ret
-        
+
         %undef TextureHeight
         %undef TextureWidth
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_rasterizer_targets_initialize -> Change render target texture size based on screen resolution
     ;---------------------------------------------------------
@@ -1095,7 +1095,7 @@ _Hook_rasterizer_targets_initialize:
         ret
 
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__rasterizer_alloc_and_create_render_target -> Change render target size and allocation method for render target 1 (texaccum target)
     ;---------------------------------------------------------
@@ -1104,15 +1104,15 @@ _Hook__rasterizer_alloc_and_create_render_target:
         %define TargetIndex         4h
         %define Width               8h
         %define z_surface           10h
-        
+
         ; ebx = height
-        
+
         ; Check the render target index for the texaccum targer.
         cmp     dword [esp+TargetIndex], 1
         jnz     .exit
-        
+
             ; ecx can be trashed by this function per the original xbe
-        
+
             ; Calculate the size of the render target buffer. Note this doesn't account for tile pitch but
             ; we aren't tiling the buffer anyway so it doesn't matter.
             movsx   ecx, word [rasterizer_globals_screen_bounds_x1]         ; screen_width
@@ -1121,13 +1121,13 @@ _Hook__rasterizer_alloc_and_create_render_target:
             movsx   eax, word [rasterizer_globals_screen_bounds_y1]         ; screen_height
             mul     ecx
             shl     eax, 2                                                  ; size = ((screen_width + 63) & ~63) * screen_height * 4 (32bpp)
-            
+
             ; Allocate a new buffer in upper 64MB.
             push    404h                                                    ; PAGE_WRITECOMBINE | PAGE_READWRITE
             push    eax
             push    PHYS_MEM_REGION_RASTERIZER_TEXACCUM_TARGET
             call    _Hack_PhysicalMemoryAlloc
-            
+
             ; Create the rasterizer target.
             or      eax, 80000000h
             push    eax                                                     ; buffer address
@@ -1142,22 +1142,22 @@ _Hook__rasterizer_alloc_and_create_render_target:
             mov     eax, dword [esp+TargetIndex+1Ch]                        ; eax = render target index
             mov     ecx, _rasterizer_create_render_target
             call    ecx
-            
+
             ret 10h
-        
+
 .exit:
 
         ; Replace the instructions we overwrote, run the function as normal.
         mov     edx, dword [physical_memory_globals_current_stage]
         push    _rasterizer_alloc_and_create_render_target+6
         ret
-        
+
         align 4, db 0
-        
+
         %undef z_surface
         %undef Width
         %undef TargetIndex
-        
+
     ;---------------------------------------------------------
     ; Hook_rasterizer_get_render_target_resolution -> Change resolution for render targets (0, 3, 24) with hard coded values
     ;---------------------------------------------------------
@@ -1172,15 +1172,15 @@ _Hook_rasterizer_get_render_target_resolution:
         mov     dword [edx], eax                                    ; *resolution_x = screen_width
         movsx   eax, word [rasterizer_globals_screen_bounds_y1]
         mov     dword [ecx], eax                                    ; *resolution_y = screen_height
-        
+
         ; Replace the instructions we overwrote.
         pop     edi
         mov     al, 1
         pop     esi
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_create_render_target_helper -> Use screen resolution for creating render target 18 (memory is stolen from the standard texture cache)
     ;---------------------------------------------------------
@@ -1189,18 +1189,18 @@ _Hook_create_render_target_helper:
         ; Replace instructions we overwrote.
         mov     eax, dword [00485898h]
         push    ebp
-        
+
         ; Use screen resolution for render target size.
         movsx   eax, word [rasterizer_globals_screen_bounds_x1]
         mov     dword [esp+4+4], eax
         movsx   eax, word [rasterizer_globals_screen_bounds_y1]
         mov     dword [esp+4+8], eax
-        
+
         push    0001DC46h
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook_should_render_screen_effect -> Use proper screen resolution for screen effect check
     ;---------------------------------------------------------
@@ -1210,22 +1210,22 @@ _Hook_should_render_screen_effect:
         movsx   eax, word [rasterizer_globals_screen_bounds_x1]
         cmp     ax, word [0048564Ch + 2]
         jnz     _Hook_should_render_screen_effect_fail
-        
+
         movsx   eax, word [rasterizer_globals_screen_bounds_y1]
         cmp     ax, word [0048564Ch]
         jnz     _Hook_should_render_screen_effect_fail
-        
+
         xor     al, al
         push    0002273Ch
         ret
-        
+
 _Hook_should_render_screen_effect_fail:
 
         xor     al, al
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__fog_build_vertex_element -> Use correct texture coordinates
     ;---------------------------------------------------------
@@ -1238,10 +1238,10 @@ _Hook__fog_build_vertex_element:
         %define pInputVector        0Ch
         %define pOutputVector       10h
         %define arg_10              14h
-        
+
         ; Setup stack frame.
         push    ecx
-        
+
         ; Call the original function.
         push    dword [esp+StackSize+arg_10]
         push    dword [esp+StackSize+pOutputVector+4]
@@ -1250,7 +1250,7 @@ _Hook__fog_build_vertex_element:
         push    dword [esp+StackSize+RegisterIndex+10h]
         mov     eax, 00027520h
         call    eax
-        
+
         ; Only modify the output values for vertex element 4.
         cmp     dword [esp+StackSize+RegisterIndex], 4
         jnz     _Hook__fog_build_vertex_element_exit
@@ -1259,23 +1259,23 @@ _Hook__fog_build_vertex_element:
         mov     ecx, dword [esp+StackSize+pOutputVector]
         cmp     dword [ecx], 0
         jz      _Hook__fog_build_vertex_element_y
-        
+
         ; Map the texcoords for the fog render target texture as (320, 240) -> (0, 1).
         mov     dword [ecx], __?float32?__(320.0)
-        
+
 _Hook__fog_build_vertex_element_y:
 
         cmp     dword [ecx+4], 0
         jz      _Hook__fog_build_vertex_element_exit
-        
+
         mov     dword [ecx+4], __?float32?__(240.0)
-        
+
 _Hook__fog_build_vertex_element_exit:
 
         ; Cleanup stack frame.
         pop     ecx
         ret 14h
-        
+
         %undef arg_10
         %undef pOutputVector
         %undef pInputVector
@@ -1283,9 +1283,9 @@ _Hook__fog_build_vertex_element_exit:
         %undef RegisterIndex
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__draw_split_screen_window_bars -> Use screen resolution for split screen bar placement
     ;---------------------------------------------------------
@@ -1296,17 +1296,17 @@ _Hook__draw_split_screen_window_bars:
         %define RectBounds      -10h
         %define HalfWidth       -8h
         %define HalfHeight      -4h
-        
+
         ; Setup stack frame.
         sub     esp, StackStart
         push    esi
         push    ecx
         push    edx
-        
+
         ; Make sure there's at least one player window.
         cmp     dword [render_globals_player_window_count], 1
         jle     _Hook__draw_split_screen_window_bars_exit
-        
+
         ; Calculate the half width/height bounds.
         mov     ecx, 2
         xor     edx, edx
@@ -1316,12 +1316,12 @@ _Hook__draw_split_screen_window_bars:
         movsx   eax, word [rasterizer_globals_screen_bounds_y1]
         idiv    ecx
         mov     dword [esp+StackSize+HalfHeight], eax
-        
+
         ; Check the screen split mode.
         lea     ecx, [esp+StackSize+RectBounds]
         cmp     dword [004BA048h], 1
         jnz     _Hook__draw_split_screen_window_bars_mode_1_2
-        
+
             ; Mode 0: draw vertical split
             mov     eax, dword [esp+StackSize+HalfHeight]
             mov     word [ecx+0], ax
@@ -1331,15 +1331,15 @@ _Hook__draw_split_screen_window_bars:
             inc     word [ecx+4]                                        ; pRect->x1 = HalfHeight + 1
             mov     ax, word [rasterizer_globals_screen_bounds_x1]
             mov     word [ecx+6], ax                                    ; pRect->y1 = screen_width
-            
+
             mov     eax, 0FF000000h                                     ; color = black
             mov     esi, _renderer_draw_color_rect
             call    esi
-            
+
             ; Check if there's more than 2 players.
             cmp     dword [render_globals_player_window_count], 2
             jle     _Hook__draw_split_screen_window_bars_exit
-            
+
                 ; Mode 0: draw horizontal split
                 lea     ecx, [esp+StackSize+RectBounds]
                 mov     eax, dword [esp+StackSize+HalfWidth]
@@ -1349,18 +1349,18 @@ _Hook__draw_split_screen_window_bars:
                 inc     word [ecx+6]                                        ; pRect->y1 = halfWidth + 1
                 mov     ax, word [rasterizer_globals_screen_bounds_y1]
                 mov     word [ecx+4], ax                                    ; pRect->x1 = screen_height
-                
+
                 xor     eax, eax
                 cmp     dword [render_globals_player_window_count], 3
                 setz    al
                 mul     dword [esp+StackSize+HalfHeight]
                 mov     word [ecx], ax                                      ; pRect->x0 = render_globals_player_window_count == 3 ? halfHeight : 0
-                
+
                 mov     eax, 0FF000000h                                     ; color = black
                 mov     esi, _renderer_draw_color_rect
                 call    esi
                 jmp     _Hook__draw_split_screen_window_bars_exit
-        
+
 _Hook__draw_split_screen_window_bars_mode_1_2:
 
         ; Mode 1/2: draw vertical split
@@ -1372,15 +1372,15 @@ _Hook__draw_split_screen_window_bars_mode_1_2:
         inc     word [ecx+6]                                        ; pRect->y1 = halfWidth + 1
         mov     eax, dword [rasterizer_globals_screen_bounds_y1]
         mov     word [ecx+4], ax                                    ; pRect->x1 = screen_height
-        
+
         mov     eax, 0FF000000h                                     ; color = black
         mov     esi, _renderer_draw_color_rect
         call    esi
-        
+
         ; Check if there's more than 2 players.
         cmp     dword [render_globals_player_window_count], 2
         jle     _Hook__draw_split_screen_window_bars_exit
-        
+
             ; Mode 1/2: draw horizontal split
             lea     ecx, [esp+StackSize+RectBounds]
             mov     eax, dword [esp+StackSize+HalfHeight]
@@ -1390,17 +1390,17 @@ _Hook__draw_split_screen_window_bars_mode_1_2:
             inc     word [ecx+4]                                        ; pRect->x1 = halfHeight + 1
             mov     ax, word [rasterizer_globals_screen_bounds_x1]
             mov     word [ecx+6], ax                                    ; pRect=>y1 = screen_width
-            
+
             xor     eax, eax
             cmp     dword [render_globals_player_window_count], 3
             setz    al
             mul     dword [esp+StackSize+HalfWidth]
             mov     word [ecx+2], ax                                    ; pRect->x0 = render_globals_player_window_count == 3 ? halfWidth : 0
-            
+
             mov     eax, 0FF000000h                                     ; color = black
             mov     esi, _renderer_draw_color_rect
             call    esi
-        
+
 _Hook__draw_split_screen_window_bars_exit:
 
         ; Cleanup stack frame.
@@ -1409,15 +1409,15 @@ _Hook__draw_split_screen_window_bars_exit:
         pop     esi
         add     esp, StackStart
         ret
-        
+
         %undef HalfHeight
         %undef HalfWidth
         %undef RectBounds
         %undef StackStart
         %undef StackSize
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__renderer_setup_player_windows -> Allow customization of split screen favor (horizontal vs vertical split)
     ;---------------------------------------------------------
@@ -1426,11 +1426,11 @@ _Hook__renderer_setup_player_windows:
         ; Check if widescreen mode is enabled.
         cmp     byte [_g_widescreen_enabled], 0
         jnz     .widescreen_enabled
-        
+
             ; Use default setting (horizontal split).
             mov     dword [esp+10h], 1
             jmp     .exit
-        
+
 .widescreen_enabled:
 
         ; Use value specified by config file.
@@ -1443,9 +1443,9 @@ _Hook__renderer_setup_player_windows:
         ; Return to function.
         push    00223585h
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__should_draw_player_hud -> Disable player HUD
     ;---------------------------------------------------------
@@ -1454,9 +1454,9 @@ _Hook__should_draw_player_hud:
         ; Disable HUD.
         xor     al, al
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; void Hook__initialize_geometry_cache() -> increase the size of the geometry cache if the console has 128MB of RAM
     ;---------------------------------------------------------
@@ -1465,15 +1465,15 @@ _Hook__initialize_geometry_cache:
         ; Check if the console has 128MB of RAM.
         cmp     byte [Hack_HasRAMUpgrade], 1
         jnz     .no_ram_upgrade
-        
+
             ; Increase the size of the geometry cache.
             mov     eax, EXPANDED_GEOMETRY_CACHE_SIZE
             cmp     word [rasterizer_globals_screen_bounds_x1], 1920
             jz      .size_calc
-            
+
                 ; Additional size increase for 720p or lower.
                 mov     eax, EXPANDED_GEOMETRY_CACHE_SIZE_720
-            
+
 .size_calc:
             ; eax = size (finish size calculation)
             push    ebp
@@ -1485,15 +1485,15 @@ _Hook__initialize_geometry_cache:
             shl     edi, 0Ch                    ; Used later in original function
             lea     ecx, [edi+0FFFh]
             and     ecx, 0FFFFF000h
-            
+
             push    4                           ; PAGE_READWRITE
             push    ecx                         ; size must be in ecx for subsequent XPhysicalProtect call
             push    PHYS_MEM_REGION_GEOMETRY_CACHE
             call    _Hack_PhysicalMemoryAlloc
-            
+
             push    0012DA73h
             ret
-        
+
 .no_ram_upgrade:
 
         ; No RAM upgrade present, replace instructions we overwrote.
@@ -1501,9 +1501,9 @@ _Hook__initialize_geometry_cache:
         and     edx, 0FFFh
         push    0012DA2Eh
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__geometry_cache_globals_cleanup -> Free geometry cache memory
     ;---------------------------------------------------------
@@ -1517,17 +1517,17 @@ _Hook__geometry_cache_globals_cleanup:
         test    eax, eax
         push    0012DAD7h
         ret
-        
+
 _geometry_cache_globals_cleanup_reentry:
 
         ; Free the allocation.
         push    PHYS_MEM_REGION_GEOMETRY_CACHE
         call    _Hack_PhysicalMemoryFree
-        
+
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; void Hook__initialize_standard_texture_cache() -> increase the size of the standard texture cache if the console has 128MB of RAM
     ;---------------------------------------------------------
@@ -1549,34 +1549,34 @@ _Hook__initialize_standard_texture_cache:
             imul    eax, 0Ch
             add     eax, Hack_PhysicalMemoryRegionInfoTable     ; pRegionInfo = &Hack_PhysicalMemoryRegionInfoTable[RegionIndex]
             mov     esi, dword [eax+4]                          ; pRegionInfo->size
-            
+
             ; Check screen resolution and further adjust cache size.
             cmp     word [rasterizer_globals_screen_bounds_x1], 1920
             jz      .size_calc
-            
+
                 ; Additional size increase for 720p or lower.
                 mov     esi, EXPANDED_TEXTURE_CACHE_SIZE_720
-                
+
 .size_calc:
             mov     ecx, esi                                    ; Used later in original function
             sar     esi, 0Ch                                    ; Used later in original function
-            
+
             push    404h                                        ; PAGE_WRITECOMBINE | PAGE_READWRITE
             push    ecx                                         ; size must be in ecx for subsequent XPhysicalProtect call
             push    PHYS_MEM_REGION_TEXTURE_CACHE
             call    _Hack_PhysicalMemoryAlloc
-            
+
             push    0012C23Eh
             ret
-        
+
 .no_ram_upgrade:
 
         ; No RAM upgrade present, run original function.
         push    _initialize_standard_texture_cache+0Ah
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hook__texture_cache_globals_cleanup -> Free texture cache memory
     ;---------------------------------------------------------
@@ -1590,17 +1590,17 @@ _Hook__texture_cache_globals_cleanup:
         mov     dword [004E6479h], 1
         push    0012C298h
         ret
-        
+
 _Hook__texture_cache_globals_cleanup_reentry:
 
         ; Free the allocation.
         push    PHYS_MEM_REGION_TEXTURE_CACHE
         call    _Hack_PhysicalMemoryFree
-        
+
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; Hack_PhysicalMemoryAlloc(int regionIndex, int size, int protect) -> Allocate physical contiguous memory in the extra RAM region
     ;---------------------------------------------------------
@@ -1611,25 +1611,25 @@ _Hack_PhysicalMemoryAlloc:
         %define RegionIndex     4h
         %define AllocSize       8h
         %define Protect         0Ch
-        
+
         ; Setup stack frame.
         sub     esp, StackStart
         push    esi
         push    edx
-        
+
         ; Get a pointer to the region info data.
         mov     eax, 0Ch
         mul     dword [esp+StackSize+RegionIndex]
         mov     esi, Hack_PhysicalMemoryRegionInfoTable
         add     esi, eax                                    ; pRegionInfo = &Hack_PhysicalMemoryRegionInfoTable[RegionIndex]
-        
+
         ; If a size was specified use it for the allocation.
         mov     eax, dword [esp+StackSize+AllocSize]
         cmp     eax, 0
         jz      _Hack_PhysicalMemoryAlloc_alloc
-        
+
             mov     dword [esi+4], eax                      ; pRegionInfo->size = AllocSize
-        
+
 _Hack_PhysicalMemoryAlloc_alloc:
 
         ; Allocate physical contiguous memory. The memory manager will search for an available memory region
@@ -1647,10 +1647,10 @@ _Hack_PhysicalMemoryAlloc_alloc:
         mov     dword [esi+8], eax                      ; pRegionInfo->address = MmAllocateContiguousMemoryEx(...)
         cmp     eax, 0
         jnz     _Hack_PhysicalMemoryAlloc_dbg_print
-        
+
         ; Allocation failed :(
         INT3
-        
+
 _Hack_PhysicalMemoryAlloc_dbg_print:
 
         ; Print the allocation info.
@@ -1661,22 +1661,22 @@ _Hack_PhysicalMemoryAlloc_dbg_print:
         mov     eax, DbgPrint
         call    eax
         add     esp, 4*4
-        
+
         ; Cleanup stack frame.
         mov     eax, dword [esi+8]          ; return pRegionInfo->address
         pop     edx
         pop     esi
         add     esp, StackStart
         ret 0Ch
-        
+
         align 4, db 0
-        
+
         %undef Protect
         %undef AllocSize
         %undef RegionIndex
         %undef StackStart
         %undef StackSize
-        
+
     ;---------------------------------------------------------
     ; Hack_PhysicalMemoryFree -> Free physical memory allocation
     ;---------------------------------------------------------
@@ -1685,17 +1685,17 @@ _Hack_PhysicalMemoryFree:
         %define StackSize       4h
         %define StackStart      0h
         %define RegionIndex     4h
-        
+
         ; Setup stack frame.
         sub     esp, StackStart
         push    esi
-        
+
         ; Get a pointer to the region info data.
         mov     eax, 0Ch
         mul     dword [esp+StackSize+RegionIndex]
         mov     esi, Hack_PhysicalMemoryRegionInfoTable
         add     esi, eax                                    ; pRegionInfo = &Hack_PhysicalMemoryRegionInfoTable[RegionIndex]
-        
+
         ; Check if the allocation address is valid.
         cmp     dword [esi+8], 0
         jz      _Hack_PhysicalMemoryFree_exit
@@ -1704,20 +1704,20 @@ _Hack_PhysicalMemoryFree:
         push    dword [esi+8]
         call    dword [MmFreeContiguousMemory]
         mov     dword [esi+8], 0
-        
+
 _Hack_PhysicalMemoryFree_exit:
 
         ; Cleanup stack frame.
         pop     esi
         add     esp, StackStart
         ret 4
-        
+
         align 4, db 0
-        
+
         %undef RegionIndex
         %undef StackStart
         %undef StackSize
-        
+
     ;---------------------------------------------------------
     ; void Hack_PatchMaxPFN()
     ;---------------------------------------------------------
@@ -1726,26 +1726,26 @@ _Hack_PatchMaxPFN:
         ; Setup the stack frame.
         push    esi
         push    edi
-        
+
         ; Get the address range for MmAllocateContiguousMemoryEx.
         mov     esi, dword [MmAllocateContiguousMemoryEx]
         lea     edi, [esi+80h]
-        
+
 _Hack_PatchMaxPFN_loop:
 
         ; Check for the following instruction that holds the max PFN to allocate.
         ;   mov     xxx, 00003FDFh
         cmp     dword [esi], 00003FDFh
         jz      _Hack_PatchMaxPFN_patch
-        
+
         ; Next iteration.
         add     esi, 1
         cmp     esi, edi
         jl      _Hack_PatchMaxPFN_loop
-        
+
         ; Max PFN value was not found.
         INT3
-        
+
 _Hack_PatchMaxPFN_patch:
 
         ; Disable write protect.
@@ -1758,21 +1758,21 @@ _Hack_PatchMaxPFN_patch:
 
         ; Update the max PFN to use the arcade limit (128MB).
         mov     dword [esi], 00007FCFh
-        
+
         ; Re-enable write-protect.
         pop     eax
         mov     cr0, eax            ; Re-enable write-protect
         popf
-        
+
 _Hack_PatchMaxPFN_exit:
 
         ; Cleanup stack frame.
         pop     edi
         pop     esi
         ret
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; void Hack_ColdRebootConsole() -> Cold reboot the console when any other executable is launched
     ;---------------------------------------------------------
@@ -1781,59 +1781,59 @@ _Hack_ColdRebootConsole:
         ; If a custom fan speed was used change it back to normal.
         cmp     dword [Cfg_OverrideFanSpeed], 0
         jz      .check_irql
-        
+
             ; Set the fan speed back to stock.
             push    10                              ; fan speed
             push    0
             push    6                               ; SMC_COMMAND_REQUEST_FAN_SPEED
             push    20h                             ; SMC_SLAVE_ADDRESS
             call    dword [HalWriteSMBusValue]
-            
+
             ; Give the SMC a chance to process the message, if not it can panic.
             push    100*1000                        ; 100ms
             call    dword [KeStallExecutionProcessor]
-        
+
             ; Set SMC fan mode to use stock speed (this doesn't seem to work if the override speed is still set).
             push    0                               ; SMC_FAN_OVERRIDE_DEFAULT
             push    0
             push    5                               ; SMC_COMMAND_FAN_OVERRIDE
             push    20h                             ; SMC_SLAVE_ADDRESS
             call    dword [HalWriteSMBusValue]
-            
+
             ; Give the SMC a chance to process the message, if not it can panic.
             push    100*1000                        ; 100ms
             call    dword [KeStallExecutionProcessor]
-            
+
 .check_irql:
 
         ; Check IRQL level to see if we can use HalWriteSMBusValue and if so have the SMC do a full reset for us.
         call    dword [KeGetCurrentIrql]
         cmp     eax, 2                                  ; if (KeGetCurrentIrql < DISPATCH_LEVEL)
         jnb     .do_pci_reset
-        
+
             ; Have the SMC do a full reset.
             push    1                                   ; SMC_RESET_ASSERT_RESET
             push    0                                   ; FALSE
             push    2                                   ; SMC_COMMAND_RESET
             push    20h                                 ; SMC_SLAVE_ADDRESS
             call    dword [HalWriteSMBusValue]
-        
+
 .do_pci_reset:
 
         ; Perform full PCI reset.
         mov     dx, 0CF9h               ; RESET_CONTROL_REGISTER
         mov     al, 0Eh                 ; RESET_CONTROL_FULL_RESET | RESET_CONTROL_RESET_CPU | RESET_CONTROL_SYSTEM_RESET
         out     dx, al
-        
+
 .halt:
-        
+
         ; Halt the CPU and wait for the reboot, thanks for playing...
         cli
         hlt
         jmp     .halt
-        
+
         align 4, db 0
-        
+
     ;---------------------------------------------------------
     ; void _crc32_calculate_stdcall(int* checksum, unsigned char* buffer, int length) -> stub for fastcall version of _crc32_calculate_opt
     ;---------------------------------------------------------
@@ -1844,36 +1844,36 @@ _crc32_calculate_stdcall:
         %define Checksum        4h
         %define Buffer          8h
         %define Length          0Ch
-        
+
         ; Setup stack frame.
         sub     esp, StackStart
         push    edi
         push    ecx
         push    edx     ; trashed by _crc32_calculate
-        
+
         ; Call fastcall version of _crc32_calculate.
         mov     edi, dword [esp+StackSize+Length]
         mov     eax, dword [esp+StackSize+Buffer]
         push    dword [esp+StackSize+Checksum]
         mov     ecx, _crc32_calculate_opt
         call    ecx
-        
+
         ; Cleanup stack frame.
         pop     edx
         pop     ecx
         pop     edi
         add     esp, StackStart
         ret
-        
+
         align 4, db 0
-        
+
         %undef Length
         %undef Buffer
         %undef Checksum
         %undef StackStart
         %undef StackSize
-        
-        
+
+
     ;---------------------------------------------------------
     ; Include files that need to be in the .hacks segment:
     ;---------------------------------------------------------
@@ -1885,7 +1885,7 @@ _crc32_calculate_stdcall:
     ;---------------------------------------------------------
     ; A poor man's data segment...
     ;---------------------------------------------------------
-        
+
 _Util_KernelImports:
         _HalReadWritePCISpace               dd 46
         _HalReturnToFirmware                dd 49
@@ -1895,33 +1895,33 @@ _Util_KernelImports:
         _MmAllocateContiguousMemoryEx       dd 166
         _MmFreeContiguousMemory             dd 171
                                             dd 0
-                                            
+
 _Hack_StartupMessage:
         db `Halo 2 HD initializing...\n`,0
         align 4, db 0
-        
+
 _Hack_CreateDeviceFormatString:
         db `IDirect3D8_CreateDevice Width=%d Height=%d Flags=0x%08x\n`,0
         align 4, db 0
-        
+
 _Hack_PhysicalMemoryMallocInfoString:
         db `physical_memory_malloc %s %ld at 0x%08x\n`,0
         align 4, db 0
-        
-        
+
+
     PHYS_MEM_REGION_STR PHYS_MEM_REGION_GEOMETRY_CACHE_STR, `geometry cache`
     PHYS_MEM_REGION_STR PHYS_MEM_REGION_TEXTURE_CACHE_STR, `texture cache`
     PHYS_MEM_REGION_STR PHYS_MEM_REGION_RASTERIZER_TEXACCUM_TARGET_STR, `rasterizer texaccum target`
-        
+
 _Hack_PhysicalMemoryRegionInfoTable:
         PHYS_MEM_REGION PHYS_MEM_REGION_GEOMETRY_CACHE_STR, 0               ; Set in hook
         PHYS_MEM_REGION PHYS_MEM_REGION_TEXTURE_CACHE_STR, EXPANDED_TEXTURE_CACHE_SIZE
         PHYS_MEM_REGION PHYS_MEM_REGION_RASTERIZER_TEXACCUM_TARGET_STR, 0
-        
-        
+
+
 _Hack_RasterizerTargetsInitialized:
         dd 0
-        
+
 _Hack_HasRAMUpgrade:                db 0
 _Hack_TripleBufferingEnabled:       db 0
 
@@ -1931,7 +1931,7 @@ _Hack_TripleBufferingEnabled:       db 0
 _Hack_DisableZCompress:             db 0
 
         align 4, db 0
-        
+
 _Hack_RuntimeDataRegionSize:        dd 3145000h     ; ~49.2MB
 _Hack_RuntimeDataRegionEndAddress:  dd 30E4000h
 

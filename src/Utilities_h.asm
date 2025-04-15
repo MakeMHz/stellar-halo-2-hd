@@ -29,7 +29,7 @@
     %macro HACK_DATA 1
         %define %1          HacksSegmentAddress + (_%1 - _hacks_code_start)
     %endmacro
-    
+
     ; HOOK_FUNCTION <address> <detour>      must be called from within .hacks segment!!!!
     %macro HOOK_FUNCTION 2
         push    %2
@@ -64,25 +64,25 @@
 ;
 ; CLAMP <register>, <lower>, <upper>
 %macro CLAMP 3
-    
+
     ; if (val < lower)
     cmp     %1, %2
     jge     %%upper
-    
+
         ; val = lower
         mov     %1, %2
-    
+
 %%upper:
 
     ; if (val > upper)
     cmp     %1, %3
     jle     %%done
-    
+
         ; val = upper
         mov     %1, %3
-        
+
 %%done:
-    
+
 %endmacro
 
 ; Macro for port data output:
