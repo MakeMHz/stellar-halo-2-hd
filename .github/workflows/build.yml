@@ -1,0 +1,65 @@
+name: Build
+
+on:
+  push:
+    paths-ignore:
+      - '.github/*'
+      - '.github/*_TEMPLATE/**'
+      - '*.md'
+  pull_request:
+    paths-ignore:
+      - '.github/*'
+      - '.github/*_TEMPLATE/**'
+      - '*.md'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: 'source'
+
+      - name: Download Resources
+        uses: actions/checkout@v4
+        with:
+          repository: 'MakeMHz/stellar-halo-2-hd-resources'
+          token: ${{ secrets.RESOURCE_TOKEN }}
+          path: 'resources'
+
+      - name: Download XboxImageXploder
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: 'grimdoomer/XboxImageXploder'
+          tag: 'v1.2'
+          fileName: 'XboxImageXploder_v1.2.zip'
+          extract: true
+          out-file-path: 'resources/tools'
+
+      - name: Expand XBE file
+        run: |
+          .\resources\tools\XboxImageXploder.exe .\resources\xbe\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe .hacks 8192
+
+      - name: Compile and Apply Patch
+        run: |
+          mkdir build
+          .\resources\tools\XePatcher_2.9\XePatcher.exe -p "$env:GITHUB_WORKSPACE\source\src\halo2_hd_patches.asm" -proc x86 -bin "$env:GITHUB_WORKSPACE\resources\xbe\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe" -o build\default.xbe
+
+      - name: Generate Delta Patch
+        run: |
+          mkdir build\release
+          .\resources\tools\xdelta.exe -e -s .\resources\xbe\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe .\build\default.xbe .\build\release\halo2_hd.xdelta
+
+      - name: Build Release
+        run: |
+          cp .\source\LICENSE .\build\release
+          cp .\source\hd_config.ini .\build\release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build
+          path: |
+            build\release
+          if-no-files-found: error
