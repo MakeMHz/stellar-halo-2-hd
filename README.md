@@ -1,4 +1,8 @@
+# Halo 2 HD - Enhanced for Project Stellar
+
 ![](/_images/stellar-halo-2-hd.png)
+
+---
 
 [![Build](https://github.com/MakeMHz/stellar-halo-2-hd/actions/workflows/build.yml/badge.svg)](https://github.com/MakeMHz/stellar-halo-2-hd/actions/workflows/build.yml)
 
