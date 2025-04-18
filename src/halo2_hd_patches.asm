@@ -11,6 +11,7 @@ BITS 32
 
 %include "Utilities_h.asm"
 %include "DirectX_h.asm"
+%include "Stellar_h.asm"
 
 %macro PHYS_MEM_REGION_STR 2
     _%1:
@@ -103,6 +104,9 @@ ASSERT_STRUCT_SIZE RECT, 8
 %define D3DResource_Release                         003FB640h   ; int D3DResource_Release(D3DResource* resource)
 
 %define D3D_CalcTilePitch                           003FD820h   ; int D3D::CalcTilePitch(int width, D3DFORMAT format<eax>)
+%define D3D_MapToLinearD3DFORMAT                    003FD780h   ; D3DFORMAT D3D_MapToLinearD3DFORMAT(D3DFORMAT format<eax>)
+
+%define CMiniport_SetVideoMode                      003FF6B1h
 
 ; Internal d3d device pointer:
 %define D3D_g_pDevice                               00407488h
@@ -130,6 +134,7 @@ ASSERT_STRUCT_SIZE RECT, 8
 %define KfRaiseIrql                                 004116C8h   ; __fastcall
 %define KfLowerIrql                                 00411618h   ; __fastcall
 %define IdexChannelObject                           00411630h
+%define AvSendTVEncoderOption                       004116ECh
 
 ; Utility functions to compile in:
 UTIL_INCLUDE lstrcpyA
@@ -145,6 +150,7 @@ HACK_FUNCTION Hack_InstallHook
 HACK_FUNCTION Hook_IDirect3D8_CreateDevice
 HACK_FUNCTION Hook_IDirect3DDevice8_Swap
 HACK_FUNCTION Hook_IDirect3DDevice8_Swap_reentry
+HACK_FUNCTION Hook_CMiniport_SetVideoMode
 HACK_FUNCTION Hook_physical_memory_allocate
 HACK_FUNCTION Hook__rasterizer_init_screen_bounds
 HACK_FUNCTION Hook_rasterizer_preinitialize
@@ -201,6 +207,12 @@ HACK_FUNCTION Cfg_ParseConfigFile
 HACK_DATA Cfg_ConfigFileOptionTable
 HACK_DATA Cfg_ConfigFilePath
 
+; Extended display mode support:
+HACK_DATA Hack_DisplayModeOverride
+HACK_DATA Cfg_ExtendedDisplayModes
+HACK_DATA Cfg_ExtendeDisplayWidth
+HACK_DATA Cfg_ExtendeDisplayHeight
+HACK_DATA Cfg_ExtendeDisplayHz
 
 HACK_DATA Cfg_Enable1080iSupport
 HACK_DATA Cfg_Enable720pSupport
@@ -605,6 +617,71 @@ _Hook_IDirect3DDevice8_Swap_exit:
         align 4, db 0
 
     ;---------------------------------------------------------
+    ; Hook_CMiniport_SetVideoMode -> Force custom display mode
+    ;---------------------------------------------------------
+_Hook_CMiniport_SetVideoMode:
+        %define StackSize   8h
+        %define StackStart  0h
+        %define Width       04h
+        %define Height      08h
+        %define Refresh     0Ch
+        %define Flags       10h
+        %define Format      14h
+        %define Pitch       18h
+
+        ;
+        push    ebx
+        push    edi
+
+        ; Determine the internal format of the back buffer.
+        mov     eax, dword [esp+StackSize+Format]
+        mov     ecx, D3D_MapToLinearD3DFORMAT
+        call    ecx
+
+        ; CMiniport->m_Format = Format;
+        mov     dword [esi + 0x0C], eax
+
+        ; CMiniport->m_Pitch = Pitch;
+        mov     eax, dword [esp+StackSize+Pitch]
+        mov     dword [esi + 0x04], eax
+
+        ; CMiniport->m_DisplayMode = DisplayMode;
+        mov     eax, dword [Hack_DisplayModeOverride]
+        mov     dword [esi + 0x08], eax
+
+        ;
+        mov     ecx, dword [esi + 0x7E4]
+        xor     eax, eax
+        inc     eax
+        mov     dword [esi + ecx * 4 + 0x7DC], eax
+
+        ; CMiniport->m_FirstFlip = 1;
+        mov     dword [esi + 0x1B8], eax
+
+        ; CMiniport->m_CurrentAvInfo = AV_PACK_HDTV | AV_STANDARD_NTSC_M | AV_FLAGS_60Hz | AV_FLAGS_WIDESCREEN
+        mov     eax, 0x00410104
+        mov     dword [esi + 0x1B4], eax
+
+        ;
+        pop     edi
+        pop     ebx
+
+        ; return 0
+        xor     eax, eax
+        ret     0x18
+
+        align 4, db 0
+
+        %undef Pitch
+        %undef Format
+        %undef Flags
+        %undef Refresh
+        %undef Height
+        %undef Width
+        %undef StackStart
+        %undef StackSize
+
+    ;---------------------------------------------------------
     ; Hook_physical_memory_allocate -> Adjust game data allocation size
     ;---------------------------------------------------------
 _Hook_physical_memory_allocate:
@@ -623,8 +700,9 @@ _Hook_physical_memory_allocate:
     ;---------------------------------------------------------
 _Hook__rasterizer_init_screen_bounds:
 
-        %define StackSize       14h
-        %define StackStart      10h
+        %define StackSize       34h
+        %define StackStart      14h
+        %define AvExtResult     -14h
         %define ScreenWidth     -10h
         %define ScreenHeight    -0Ch
         %define WidthAdjust     -8h
@@ -632,7 +710,7 @@ _Hook__rasterizer_init_screen_bounds:
 
         ; Setup stack frame.
         sub     esp, StackStart
-        push    ecx
+        pushad
 
         mov     dword [esp+StackSize+WidthAdjust], edx
         mov     dword [esp+StackSize+HeightAdjust], ecx
@@ -641,6 +719,104 @@ _Hook__rasterizer_init_screen_bounds:
         mov     dword [esp+StackSize+ScreenWidth], 640
         mov     dword [esp+StackSize+ScreenHeight], 480
 
+        ; Check if the console has a RAM upgrade.
+        ; Extended display modes are only supported on consoles with a RAM upgrade.
+        cmp     byte [Hack_HasRAMUpgrade], 0
+        jz      .retail_display_modes
+
+        ; Check if extended modes are enabled.
+        cmp     byte [Cfg_ExtendedDisplayModes], 0
+        jz      .retail_display_modes
+
+.extended_display_modes:
+        ; Query the kernel for extended modes support.
+        ; AvSendTVEncoderOption will not set Param if the kernel does not support extended modes.
+        mov     dword [esp+StackSize+AvExtResult], 0   ; Clear AvExtResult to 0.
+        lea     eax, [esp+StackSize+AvExtResult]
+        push    eax                           ; Result
+        push    0                             ; Param
+        push    AV_OPTION_EXT_ENABLED         ; Option
+        push    0                             ; RegisterBase
+        call    dword [AvSendTVEncoderOption] ; AvSendTVEncoderOption(NULL, AV_OPTION_EXT_ENABLED, NULL, &AvExtResult)
+
+        ; Check if extended modes are enabled and supported.
+        cmp     dword [esp+StackSize+AvExtResult], 0
+        jz      .retail_display_modes
+
+        ;
+        mov     ebx, 0
+
+.extended_display_modes_match:
+        mov     dword [esp+StackSize+AvExtResult], 0   ; Clear AvExtResult to 0.
+        lea     eax, [esp+StackSize+AvExtResult]
+        push    eax                           ; Result
+        push    ebx                           ; Param
+        push    AV_OPTION_EXT_MODE_QUERY      ; Option
+        push    0                             ; RegisterBase
+        call    dword [AvSendTVEncoderOption] ; AvSendTVEncoderOption(NULL, AV_OPTION_EXT_MODE_QUERY, NULL, &AvExtResult)
+
+        ; Increment the mode index for the next query.
+        inc     ebx
+
+        ; A pointer to the extended mode structure is returned in AvExtResult.
+        mov     eax, dword [esp+StackSize+AvExtResult]
+
+        ; Check if we've hit the end of the list.
+        cmp     eax, 0
+        jz      .retail_display_modes
+
+        ; Check if the width matches
+        mov     ecx, dword [eax + 04h]
+        cmp     dword [Cfg_ExtendeDisplayWidth], ecx
+        jnz     .extended_display_modes_match
+
+        ; Check if the height matches
+        mov     ecx, dword [eax + 08h]
+        cmp     dword [Cfg_ExtendeDisplayHeight], ecx
+        jnz     .extended_display_modes_match
+
+        ; Check if the refresh rate matches
+        mov     ecx, dword [eax + 0Ch]
+        cmp     dword [Cfg_ExtendeDisplayHz], ecx
+        jnz     .extended_display_modes_match
+
+.extended_display_modes_found:
+        mov     ecx, dword [eax + 00h]
+        mov     dword [Hack_DisplayModeOverride], ecx
+
+        mov     ecx, dword [eax + 04h]
+        mov     dword [esp+StackSize+ScreenWidth], ecx
+
+        mov     ecx, dword [eax + 08h]
+        mov     dword [esp+StackSize+ScreenHeight], ecx
+
+        mov     ecx, dword [eax + 0Ch]
+        mov     word [_g_refresh_rate_hz], cx
+
+        mov     byte [_g_widescreen_enabled], 1
+        mov     byte [_g_progressive_scan_enabled], 1
+
+        HOOK_FUNCTION CMiniport_SetVideoMode, Hook_CMiniport_SetVideoMode
+
+        ; Dirty hack to work around for non-standard 60Hz refresh rates.
+        ; TODO: Determine why this is needed... The refresh/2 ends is on the stack and ends up in XNet?
+        ; Disable write protect.
+        cli                         ; Disable interrupts
+        mov     eax, cr0            ; Get the control register value
+        push    eax                 ; Save it for later
+        and     eax, 0FFFEFFFFh     ; Disable write-protect
+        mov     cr0, eax
+
+        ; Force EAX = 60Hz
+        mov     dword [0x0013813C], 90909090h
+
+        ; Re-enable write-protect.
+        pop     eax
+        mov     cr0, eax            ; Re-enable write-protect
+
+        jmp     .set_screen_bounds
+
+.retail_display_modes:
         ; If widescreen is not enabled on the console force 640x480 or d3d init will fail.
         cmp     byte [_g_widescreen_enabled], 0
         jz      .set_screen_bounds
@@ -734,7 +910,7 @@ _Hook__rasterizer_init_screen_bounds:
         mov     word [_rasterizer_globals_frame_bounds_y1], ax
 
         ; Cleanup stack frame.
-        pop     ecx
+        popad
         add     esp, StackStart
         ret
 
@@ -742,6 +918,7 @@ _Hook__rasterizer_init_screen_bounds:
         %undef WidthAdjust
         %undef ScreenHeight
         %undef ScreenWidth
+        %undef AvExtResult
         %undef StackStart
         %undef StackSize
 
@@ -1924,6 +2101,8 @@ _Hack_RasterizerTargetsInitialized:
 
 _Hack_HasRAMUpgrade:                db 0
 _Hack_TripleBufferingEnabled:       db 0
+
+_Hack_DisplayModeOverride:          dd 88070701h
 
 ; Initially I thought that disabling depth buffer compression was increasing performance, and maybe it was without GPU overclocking... But
 ; in later OC tests I discovered that memory bandwidth seems to be the bottleneck and leaving depth buffer compression enabled actually

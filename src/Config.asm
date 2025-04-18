@@ -782,6 +782,12 @@ _Cfg_ConfigFileOptionTable:
     ;CFG_OPTION _Cfg_TestBoolValueTrue, 0x36adb06d, CFG_TYPE_BOOL, 0
     ;CFG_OPTION _Cfg_TestBoolValueFalse, 0x590e3439, CFG_TYPE_BOOL, 0
 
+    ; Stellar options:
+    CFG_OPTION _Cfg_ExtendedDisplayModes, 0x13d4eeb3, CFG_TYPE_BOOL, 0
+    CFG_OPTION _Cfg_ExtendeDisplayWidth, 0x288f3cf4, CFG_TYPE_INT, 800
+    CFG_OPTION _Cfg_ExtendeDisplayHeight, 0x36ea94a7, CFG_TYPE_INT, 600
+    CFG_OPTION _Cfg_ExtendeDisplayHz, 0xfd3dd77a, CFG_TYPE_INT, 60
+
     ; Video options:
     CFG_OPTION _Cfg_Enable1080iSupport, 0x4b51a48c, CFG_TYPE_BOOL, 0
     CFG_OPTION _Cfg_Enable720pSupport, 0x3f060ff9, CFG_TYPE_BOOL, 1
