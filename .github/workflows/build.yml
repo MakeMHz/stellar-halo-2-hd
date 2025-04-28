@@ -39,12 +39,13 @@ jobs:
 
       - name: Expand XBE file
         run: |
-          .\resources\tools\XboxImageXploder.exe .\resources\xbe\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe .hacks 8192
+          mkdir -p build\expanded
+          cp .\resources\xbe\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe .\build\expanded\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe
+          .\resources\tools\XboxImageXploder.exe .\build\expanded\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe .hacks 8192
 
       - name: Compile and Apply Patch
         run: |
-          mkdir build
-          .\resources\tools\XePatcher_2.9\XePatcher.exe -p "$env:GITHUB_WORKSPACE\source\src\halo2_hd_patches.asm" -proc x86 -bin "$env:GITHUB_WORKSPACE\resources\xbe\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe" -o build\default.xbe
+          .\resources\tools\XePatcher_2.9\XePatcher.exe -p "$env:GITHUB_WORKSPACE\source\src\halo2_hd_patches.asm" -proc x86 -bin "$env:GITHUB_WORKSPACE\build\expanded\78bcc597d9a30ae91df6fc5eb44fdc62a28ee7f2.xbe" -o build\default.xbe
 
       - name: Generate Delta Patch
         run: |
